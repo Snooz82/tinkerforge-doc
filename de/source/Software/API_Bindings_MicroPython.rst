@@ -18,8 +18,12 @@ Voraussetzungen
 ---------------
 
 * `MicroPython <https://micropython.org/>`__ 1.17 oder neuer
-* Ein MicroPython-fähiges Board mit WiFi oder Ethernet Netzwerkanbindung
-  (z.B. ESP32, Raspberry Pi Pico W)
+* **TCP/IP-Modus**: Ein Board mit WiFi oder Ethernet Netzwerkanbindung
+  (z.B. ESP32, Raspberry Pi Pico W) und ein Brick Daemon oder eine
+  WiFi/Ethernet Extension
+* **Lokaler SPI-Modus**: Ein Board mit direkt per SPI angeschlossenen Bricklets
+  (z.B. ESP32 Brick, ESP32 Ethernet Brick, Raspberry Pi mit HAT).
+  Keine Netzwerkverbindung erforderlich.
 
 .. _api_bindings_micropython_install:
 
@@ -37,12 +41,18 @@ Die ``.py`` Dateien aus dem ``source/`` Ordner der
 `ampy <https://github.com/scientificit/ampy>`__ auf das Board kopiert werden.
 Zum Beispiel mit mpremote::
 
+ mpremote cp source/connection_common.py :
  mpremote cp source/ip_connection.py :
  mpremote cp source/bricklet_temperature_v2.py :
 
 Es müssen nur die tatsächlich benötigten Bindings kopiert werden, um Platz auf
-dem Board zu sparen. Mindestens werden immer ``ip_connection.py`` sowie die
-Binding-Datei für jedes zu verwendende Gerät benötigt.
+dem Board zu sparen. Mindestens werden immer ``connection_common.py`` sowie das
+Verbindungsmodul für den gewählten Modus benötigt:
+
+* **TCP/IP-Modus**: ``connection_common.py`` + ``ip_connection.py`` +
+  Geräte-Bindings
+* **Lokaler SPI-Modus**: ``connection_common.py`` + ``spi_connection.py`` +
+  ein HAL-Modul (z.B. ``hal_esp32_brick.py``) + Geräte-Bindings
 
 WiFi-Einrichtung
 ----------------
@@ -130,6 +140,91 @@ können::
  Auto-Reconnect wird in den MicroPython Bindings nicht unterstützt, da dafür
  Hintergrund-Threads benötigt werden. Die Verbindungswiederherstellung muss
  explizit im eigenen Code behandelt werden.
+
+.. _api_bindings_micropython_spi:
+
+Lokale SPI-Verbindung
+---------------------
+
+Für Boards, bei denen Bricklets direkt per SPI angeschlossen sind — wie der
+ESP32 Brick, ESP32 Ethernet Brick oder ein Raspberry Pi mit HAT — kann
+``SPIConnection`` anstelle von ``IPConnection`` verwendet werden, um Bricklets
+ohne Netzwerkverbindung anzusprechen. Dabei wird das SPITFP (SPI Tinkerforge
+Protocol) für die direkte Kommunikation über den SPI-Bus verwendet.
+
+**Vorteile gegenüber dem TCP/IP-Modus:**
+
+* Kein Netzwerk-Stack erforderlich (kein WiFi, kein Socket, kein Brick Daemon)
+* Geringere Latenz (direkter SPI-Zugriff)
+* Kleinerer Speicherbedarf (keine ``ip_connection.py``, ``hashlib`` oder
+  ``hmac`` nötig)
+
+**Mindestens benötigte Dateien auf dem Board:**
+
+* ``connection_common.py`` — gemeinsame Geräte- und Protokoll-Grundlagen
+* ``spi_connection.py`` — SPI-Verbindung mit SPITFP-Protokoll
+* Ein HAL-Modul für das verwendete Board (z.B. ``hal_esp32_brick.py``)
+* Die benötigten Geräte-Bindings
+
+**Verfügbare HAL-Module:**
+
+* ``hal_esp32_brick.py`` — ESP32 Brick (6 Ports A-F, zwei SPI-Busse)
+* ``hal_esp32_ethernet_brick.py`` — ESP32 Ethernet Brick (6 Ports, Demux-CS)
+* ``hal_raspberry_pi.py`` — Raspberry Pi (benutzerdefinierbare CS-Pins)
+* ``hal_linux.py`` — Linux-Boards mit spidev
+* ``hal_generic.py`` — Beliebiges MicroPython-Board (frei konfigurierbar)
+
+**Beispiel** (ESP32 Brick mit Temperature Bricklet 2.0):
+
+.. code-block:: python
+
+  from hal_esp32_brick import ESP32BrickHAL
+  from spi_connection import SPIConnection
+  from bricklet_temperature_v2 import BrickletTemperatureV2
+
+  spi = SPIConnection(ESP32BrickHAL())
+  spi.connect()
+
+  t = BrickletTemperatureV2('ABC', spi)  # UID des eigenen Bricklets verwenden
+  print('Temperatur:', t.get_temperature() / 100.0, 'C')
+
+  spi.disconnect()
+
+``SPIConnection`` bietet die gleiche API wie ``IPConnection`` — die gleichen
+Methoden ``send_request()``, ``dispatch_callbacks()``, ``enumerate()`` und
+``register_callback()``. Geräte-Bindings funktionieren unverändert mit beiden
+Verbindungstypen.
+
+**Bricklets auf dem SPI-Bus aufzählen:**
+
+.. code-block:: python
+
+  from hal_esp32_brick import ESP32BrickHAL
+  from spi_connection import SPIConnection
+
+  def cb_enumerate(uid, connected_uid, position, hw_version, fw_version,
+                   device_id, enumeration_type):
+      print('UID: {}, Port: {}, Device ID: {}'.format(uid, position, device_id))
+
+  spi = SPIConnection(ESP32BrickHAL())
+  spi.connect()
+  spi.register_callback(SPIConnection.CALLBACK_ENUMERATE, cb_enumerate)
+  spi.enumerate()
+  spi.disconnect()
+
+**Generisches HAL für eigene Boards:**
+
+.. code-block:: python
+
+  from hal_generic import GenericHAL
+  from spi_connection import SPIConnection
+
+  hal = GenericHAL(ports=[
+      {'name': 'A', 'cs_pin': 16, 'spi_id': 2},
+      {'name': 'B', 'cs_pin': 17, 'spi_id': 2},
+  ])
+  spi = SPIConnection(hal)
+  spi.connect()
 
 Dateigröße reduzieren mit mpy-cross
 ------------------------------------

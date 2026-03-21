@@ -43,6 +43,13 @@ Authenticate
  :tab-width: 4
 
 
+.. note::
+ If your Bricklets are connected directly via SPI (e.g. on an ESP32 Brick
+ or Raspberry Pi with HAT), you can use ``SPIConnection`` instead of
+ ``IPConnection`` for local access without any network connection. See
+ :ref:`Local SPI Connection <api_bindings_micropython_spi>` for details.
+ ``SPIConnection`` provides the same API as ``IPConnection``.
+
 .. _ip_connection_micropython_api:
 
 API

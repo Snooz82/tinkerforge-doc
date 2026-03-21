@@ -17,8 +17,11 @@ Requirements
 ------------
 
 * `MicroPython <https://micropython.org/>`__ 1.17 or newer
-* A MicroPython-capable board with WiFi or Ethernet networking (e.g. ESP32,
-  Raspberry Pi Pico W)
+* **TCP/IP mode**: A board with WiFi or Ethernet networking (e.g. ESP32,
+  Raspberry Pi Pico W) and a Brick Daemon or WiFi/Ethernet Extension
+* **Local SPI mode**: A board with Bricklets connected directly via SPI
+  (e.g. ESP32 Brick, ESP32 Ethernet Brick, Raspberry Pi with HAT).
+  No network connection needed.
 
 .. _api_bindings_micropython_install:
 
@@ -35,12 +38,18 @@ Copy the ``.py`` files from the ``source/`` folder of the
 `Thonny <https://thonny.org/>`__ or
 `ampy <https://github.com/scientificit/ampy>`__. For example, using mpremote::
 
+ mpremote cp source/connection_common.py :
  mpremote cp source/ip_connection.py :
  mpremote cp source/bricklet_temperature_v2.py :
 
 Copy only the bindings you actually need to save space on the board. At
-minimum, you always need ``ip_connection.py`` plus the binding file for each
-device you want to use.
+minimum, you always need ``connection_common.py`` plus the connection module
+for your mode:
+
+* **TCP/IP mode**: ``connection_common.py`` + ``ip_connection.py`` + device
+  bindings
+* **Local SPI mode**: ``connection_common.py`` + ``spi_connection.py`` + a
+  HAL module (e.g. ``hal_esp32_brick.py``) + device bindings
 
 WiFi Setup
 ----------
@@ -124,6 +133,90 @@ Now you're ready to run this example on your board::
  Auto-reconnect is not supported in the MicroPython bindings because it
  requires background threads. You must handle reconnection explicitly in your
  code.
+
+.. _api_bindings_micropython_spi:
+
+Local SPI Connection
+--------------------
+
+For boards that have Bricklets connected directly via SPI — such as the
+ESP32 Brick, ESP32 Ethernet Brick, or a Raspberry Pi with HAT — you can use
+``SPIConnection`` instead of ``IPConnection`` to access Bricklets without any
+network connection. This uses the SPITFP (SPI Tinkerforge Protocol) to
+communicate directly over the SPI bus.
+
+**Advantages over TCP/IP mode:**
+
+* No network stack required (no WiFi, no socket, no Brick Daemon)
+* Lower latency (direct SPI access)
+* Smaller footprint (no ``ip_connection.py``, ``hashlib`` or ``hmac`` needed)
+
+**Minimum files needed on the board:**
+
+* ``connection_common.py`` — shared device and protocol primitives
+* ``spi_connection.py`` — SPI connection with SPITFP protocol
+* A HAL module for your board (e.g. ``hal_esp32_brick.py``)
+* The device binding(s) you want to use
+
+**Available HAL modules:**
+
+* ``hal_esp32_brick.py`` — ESP32 Brick (6 ports A-F, dual SPI bus)
+* ``hal_esp32_ethernet_brick.py`` — ESP32 Ethernet Brick (6 ports, demux CS)
+* ``hal_raspberry_pi.py`` — Raspberry Pi (user-configurable CS pins)
+* ``hal_linux.py`` — Linux boards with spidev
+* ``hal_generic.py`` — Any MicroPython board (fully user-configurable)
+
+**Example** (ESP32 Brick with a Temperature Bricklet 2.0):
+
+.. code-block:: python
+
+  from hal_esp32_brick import ESP32BrickHAL
+  from spi_connection import SPIConnection
+  from bricklet_temperature_v2 import BrickletTemperatureV2
+
+  spi = SPIConnection(ESP32BrickHAL())
+  spi.connect()
+
+  t = BrickletTemperatureV2('ABC', spi)  # use UID of your Bricklet
+  print('Temperature:', t.get_temperature() / 100.0, 'C')
+
+  spi.disconnect()
+
+``SPIConnection`` provides the same API as ``IPConnection`` — the same
+``send_request()``, ``dispatch_callbacks()``, ``enumerate()`` and
+``register_callback()`` methods. Device bindings work unchanged with either
+connection type.
+
+**Enumerating Bricklets** on the SPI bus:
+
+.. code-block:: python
+
+  from hal_esp32_brick import ESP32BrickHAL
+  from spi_connection import SPIConnection
+
+  def cb_enumerate(uid, connected_uid, position, hw_version, fw_version,
+                   device_id, enumeration_type):
+      print('UID: {}, Port: {}, Device ID: {}'.format(uid, position, device_id))
+
+  spi = SPIConnection(ESP32BrickHAL())
+  spi.connect()
+  spi.register_callback(SPIConnection.CALLBACK_ENUMERATE, cb_enumerate)
+  spi.enumerate()
+  spi.disconnect()
+
+**Using the Generic HAL** for custom boards:
+
+.. code-block:: python
+
+  from hal_generic import GenericHAL
+  from spi_connection import SPIConnection
+
+  hal = GenericHAL(ports=[
+      {'name': 'A', 'cs_pin': 16, 'spi_id': 2},
+      {'name': 'B', 'cs_pin': 17, 'spi_id': 2},
+  ])
+  spi = SPIConnection(hal)
+  spi.connect()
 
 Reducing File Size with mpy-cross
 ----------------------------------
